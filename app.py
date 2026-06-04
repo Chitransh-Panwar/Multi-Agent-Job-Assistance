@@ -135,3 +135,83 @@ def estimate_match_score(job,cv_text,latex_content):
     score=min(int((matches/len(words))*100*3),100)
     return max(score,10)
 
+
+def save_excel_log(log):
+    os.makedirs("outputs",exist_ok=True)
+    df=pd.DataFrame(log)
+    path="outputs/applications_log.xlsx"
+    df.to_excel(path,index=False)
+
+st.title("🤖 AI Job Search Assistant")
+st.caption("Powered by CrewAI + OpenRouter — finds, matches & applies for jobs automatically")
+st.divider()
+
+sidebar,main=st.columns([1,3],gap="large")
+
+with sidebar:
+    st.subheader("⚙️ Setup")
+    st.markdown("** Upload your CV **")
+    uploaded = st.file_uploader(
+        "PDF or LaTeX (.tex)",
+        type=["pdf", "tex"],
+        label_visibility="collapsed"
+    )
+    if uploaded:
+        suffix=".tex" if uploaded.name.endswith(".tex") else ".pdf"
+        with tempfile.NamedTemporaryFile(
+            delete=False,suffix=suffix 
+        ) as tmp:
+            tmp.write(uploaded.read())
+            tmp_path=tmp.name 
+
+        cv_text,latex_content=load_cv(
+            pdf_path=tmp_path if suffix == ".pdf" else None,
+            tex_path=tmp_path if suffix == ".pdf" else None 
+        )
+        st.session_state.cv_text=cv_text
+        st.session_state.latex_content=latex_content
+        st.success(f"✅ {uploaded.name}")
+
+        with st.expander(" Preview"):
+            preview=(latex_content or cv_text or "")[:400]
+            st.text(preview + "...")
+
+    st.divider()
+
+    st.markdown("** Your Name **")
+    name=st.text_input(
+        "name",
+        placeholder="e.g Chitransh Panwar",
+        label_visibility="collapsed"
+    )
+    if name:
+        st.session_state.candidate_name=name 
+
+    st.divider()
+
+    st.markdown("** Mode **")
+    mode=st.radio(
+        "mode",
+        ["Manual","Auto Pilot"],
+        label_visibility="collapsed",
+        horizontal=True
+    )
+    st.markdown("**Min match Score")
+    min_score=st.slider(
+        "min_score",
+        min_value=10,
+        max_value=90,
+        value=60,
+        step=5,
+        label_visibility="collapsed",
+        format="%d%%" 
+    )
+    st.session_state.min_score=min_score
+    st.divider()
+
+    st.markdown("**Session Stats**")
+    c1,c2=st.columns(2)
+    c1.metric("Job Found",len(st.session_state.jobs))
+    c2.metric("Matched",len(st.session_state.matched_jobs))
+    c1.metric("Processed",st.session_state.processed_count)
+    c2.metric("cvs Generated",len(st.session_state.log))
