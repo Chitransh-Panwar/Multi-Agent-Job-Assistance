@@ -1,6 +1,7 @@
 import requests
 import os
 from dotenv import load_dotenv
+from datetime import datetime,timedelta,timezone
 
 load_dotenv()
 
@@ -33,7 +34,8 @@ def fetch_adzuna_jobs(role, location="india", num_results=5):
                 "company": job.get("company", {}).get("display_name", "N/A"),
                 "location": job.get("location", {}).get("display_name", "N/A"),
                 "description": job.get("description", "N/A")[:300],
-                "url": job.get("redirect_url", "N/A")
+                "url": job.get("redirect_url", "N/A"),
+                "data_posted":job.get("created",None)
             })
         return jobs
     except Exception as e:
@@ -71,7 +73,8 @@ def fetch_jsearch_jobs(role, location="India", num_results=5):
                 "company": job.get("employer_name", "N/A"),
                 "location": job.get("job_city", "N/A"),
                 "description": job.get("job_description", "N/A")[:300],
-                "url": job.get("job_apply_link", "N/A")
+                "url": job.get("job_apply_link", "N/A"),
+                "date_posted":job.get("job_posted_at_datetime_utc",None)
             })
         return jobs
     except Exception as e:
@@ -104,7 +107,8 @@ def fetch_muse_jobs(role, num_results=5):
                 "company": job.get("company", {}).get("name", "N/A"),
                 "location": job.get("locations", [{}])[0].get("name", "Remote"),
                 "description": job.get("contents", "N/A")[:300],
-                "url": job.get("refs", {}).get("landing_page", "N/A")
+                "url": job.get("refs", {}).get("landing_page", "N/A"),
+                "date_posted":job.get("publication_date",None)
             })
         return jobs
     except Exception as e:
@@ -144,7 +148,8 @@ def fetch_usajobs(role, num_results=5):
                 "company": position.get("OrganizationName", "N/A"),
                 "location": position.get("PositionLocationDisplay", "N/A"),
                 "description": position.get("UserArea", {}).get("Details", {}).get("JobSummary", "N/A")[:300],
-                "url": position.get("PositionURI", "N/A")
+                "url": position.get("PositionURI", "N/A"),
+                "date_posted":job.get("PublicationStartDate",None)
             })
         return jobs
     except Exception as e:
@@ -176,7 +181,8 @@ def fetch_arbeitnow_jobs(role, num_results=5):
                 "description": job.get("description", "N/A")[:300],
                 "url": job.get("url", "N/A"),
                 "remote": job.get("remote", False),
-                "tags": job.get("tags", [])
+                "tags": job.get("tags", []),
+                "date_posted":job.get("created_at",None)
             })
         return jobs
     except Exception as e:
@@ -212,7 +218,8 @@ def fetch_findwork_jobs(role, num_results=5):
                 "description": job.get("text", "N/A")[:300],
                 "url": job.get("url", "N/A"),
                 "remote": job.get("remote", False),
-                "tags": job.get("keywords", [])
+                "tags": job.get("keywords", []),
+                "date_posted":job.get("date_posted",None)
             })
         return jobs
     except Exception as e:
@@ -251,12 +258,59 @@ def fetch_jooble_jobs(role, location="India", num_results=5):
                 "description": job.get("snippet", "N/A")[:300],
                 "url": job.get("link", "N/A"),
                 "salary": job.get("salary", "N/A"),
-                "type": job.get("type", "N/A")
+                "type": job.get("type", "N/A"),
+                "date_posted":job.get("updated",None)
             })
         return jobs
     except Exception as e:
         print(f"Jooble error: {e}")
         return []
+    
+
+def filter_jobs_by_date(jobs,max_days=7):
+    filtered=[]
+
+    now=datetime.now(timezone.utc)
+    cutoff=now-timedelta(days=max_days)
+
+    no_date_count=0
+
+    for job in jobs:
+        date_str=job.get("date_posted")
+        if not date_str:
+            no_date_count+=1
+            job["date_posted"]="UnKnown"
+            job["days_ago"]="UnKnown"
+            filtered.append(job)
+            continue
+
+        try:
+            date_str=str(date_str).strip()
+            if "T" in date_str:
+                date_str=date_str.replace("Z","+00:00")
+                posted_date=datetime.fromisoformat(date_str)
+                if posted_date.tzinfo in None:
+                    posted_date=posted_date.replace(
+                        tzinfo=timezone.utc
+                    )
+            else:
+                posted_date=datetime.strptime(
+                    date_str[:10],"%Y-%m-%d"
+                ).replace(tzinfo=timezone.utc)
+
+            days_ago=(now-posted_date).days
+            job["days_ago"]=days_ago
+            if posted_date >= cutoff:
+                filtered.append(job)
+        except Exception:
+            job["days_ago"]="UnKnown"
+            filtered.append(job)
+
+    print(f" Date filter :{len(filtered)}/{len(jobs)} jobs" f"within {max_days} days")
+    print(f"({no_date_count} jobs had no date -including default )")
+    return filtered
+            
+
 
 # ─────────────────────────────────────────
 # CV PARSER

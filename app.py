@@ -6,7 +6,7 @@ from datetime import datetime
 from crewai import Crew,Process
 from agents import create_job_analyzer_agent,create_messaging_agent,create_resume_agent
 from tasks import create_job_analysis_task,create_messaging_task,create_resume_task
-from tools import fetch_all_jobs,load_cv 
+from tools import fetch_all_jobs,load_cv ,filter_jobs_by_date
 from main import compile_latex_to_pdf,extract_latex_from_output
 
 st.set_page_config(
@@ -41,7 +41,8 @@ defaults={
     "log":[],
     "processing":False,
     "Processed_count":0,
-    "min_score":60
+    "min_score":60,
+    "max_days":7
 }
 
 for k,v in defaults.items():
@@ -139,10 +140,106 @@ def estimate_match_score(job,cv_text,latex_content):
 
 
 def save_excel_log(log):
-    os.makedirs("outputs",exist_ok=True)
+    import openpyxl
+    from openpyxl.styles import (PatternFill,Font,Alignment,Border,Side)
+    os.makedirs("outputs/tracker",exist_ok=True)
+    path="outputs/tracker/job_applications.xlsx"
+
     df=pd.DataFrame(log)
-    path="outputs/applications_log.xlsx"
     df.to_excel(path,index=False)
+
+    wb=openpyxl.load_workbook(path)
+    ws=wb.active
+    ws.title="Applications"
+
+    header_fill=PatternFill(
+        start_color="1E3A5F",
+        end_color="1E3A5F",
+        fill_type="solid"
+    )
+
+    header_font=Font(
+        color="FFFFFF",
+        bold=True,
+        size=11
+    )
+    border=Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin")
+
+    )
+
+    for cell in ws[1]:
+        cell.fill=header_fill
+        cell.font=header_font 
+        cell.alignment=Alignment(horizontal="center",vertical="center")
+        cell.border=border
+
+    green_fill = PatternFill(
+        start_color="D4EDDA",
+        end_color="D4EDDA",
+        fill_type="solid"
+    )
+    yellow_fill = PatternFill(
+        start_color="FFF3CD",
+        end_color="FFF3CD",
+        fill_type="solid"
+    )
+    red_fill = PatternFill(
+        start_color="F8D7DA",
+        end_color="F8D7DA",
+        fill_type="solid"
+    )
+
+    for row in ws.iter_rows(min_row=2):
+        score_cell=row[5].value or "0%"
+        score=int(str(score_cell).replace("%",""))
+
+
+        if score>=70:
+            fill=green_fill
+        elif score >=50:
+            fill=yellow_fill
+        else:
+            fill=red_fill 
+
+        for cell in row:
+            cell.fill=fill
+            cell.border=border
+            cell.alignment=Alignment(
+                horizontal="left",
+                vertical="center",
+                wrap_text=True
+
+            )
+
+    for col in ws.columns:
+        max_len=0
+        col_letter=col[0].column_letter
+        for cell in col:
+            if cell.value:
+                max_len=max(max_len,len(str(cell.value)))
+        ws.column_dimensions[col_letter].width=min(max_len+4,40)
+
+    ws.freeze_panes="A2"
+
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    dv=DataValidation(
+        type="list",
+        formula1='"Pending,Applied,Interview,Rejected,Offer"',
+        allow_blank=True 
+    )
+    ws.add_data_validation(dv)
+
+    for row_num in range(2,len(log)+2):
+        dv.add(ws[f"J{row_num}"])
+
+    wb.save(path)
+    print(f"Excel Saved : {path}")
+    return path
 
 st.title("🤖 AI Job Search Assistant")
 st.caption("Powered by CrewAI + OpenRouter — finds, matches & applies for jobs automatically")
@@ -211,6 +308,19 @@ with sidebar:
     st.session_state.min_score=min_score
     st.divider()
 
+    st.markdown("Max job age(days)")
+    max_days=st.slider(
+        "max_days",
+        min_value=1,
+        max_value=30,
+        value=7,
+        step=1,
+        label_visibility="collapsed",
+        format="%d days"
+    )
+    st.session_state.max_days=max_days
+    st.divider()
+
     st.markdown("**Session Stats**")
     c1,c2=st.columns(2)
     c1.metric("Job Found",len(st.session_state.jobs))
@@ -241,10 +351,10 @@ with main:
             )
         num_per_platform=st.slider(
             "Jobs per platform",
-            min_value=5,
+            min_value=1,
             max_value=30,
-            value=10,
-            step=5
+            value=50,
+            step=1
         )
 
         if st.button("Search Jobs",use_container_width=True):
@@ -260,6 +370,7 @@ with main:
                         location=location,
                         num_results=num_per_platform
                     )
+                    jobs=filter_jobs_by_date(jobs,max_days=st.session_state.max_days)
                     st.session_state.jobs=jobs
 
                 with st.spinner("Scoring Jobs against your CV..."):
@@ -303,9 +414,13 @@ with main:
                     score_color="match-low"
                     emoji="🔴"
 
+                days_ago = job.get("days_ago", "Unknown")
+                days_str = f"{days_ago}d ago" if isinstance(days_ago, int) \
+                            else "Date unknown"
+
                 with st.expander(
-                    f"{emoji} {job['title']} @ {job['company']}"
-                    f"- {score}% match | {job['source']}"
+                    f"{emoji} {job['title']} @ {job['company']} "
+                    f"— {score}% match | {job['source']} | 📅 {days_str}"
                 ):
                     c1,c2,c3=st.columns(3)
                     c1.markdown(f"**Company:** {job['company']}")
