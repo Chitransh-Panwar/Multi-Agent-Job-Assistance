@@ -124,10 +124,12 @@ def run_crew_for_jobs(job,cv_text,latex_content,candidate_name,job_index):
 def estimate_match_score(job,cv_text,latex_content):
     cv=(cv_text or "" ) + (latex_content or "")
     cv_lower=cv.lower()
-    desc_lower=(job.get("description","") + job.get("title","")).lower()
+    description = str(job.get("description") or "")
+    title = str(job.get("title") or "")
 
-    words=[w.strip(".,[]()") for w in desc_lower.strip()
-           if len(w)>4]
+    desc_lower = f"{description} {title}".lower()
+    words=[w.strip(".,[]()") for w in desc_lower.split() if len(w)>4]
+           
     if not words:
         return 50 
     
@@ -166,7 +168,7 @@ with sidebar:
 
         cv_text,latex_content=load_cv(
             pdf_path=tmp_path if suffix == ".pdf" else None,
-            tex_path=tmp_path if suffix == ".pdf" else None 
+            tex_path=tmp_path if suffix == ".tex" else None 
         )
         st.session_state.cv_text=cv_text
         st.session_state.latex_content=latex_content
@@ -213,5 +215,350 @@ with sidebar:
     c1,c2=st.columns(2)
     c1.metric("Job Found",len(st.session_state.jobs))
     c2.metric("Matched",len(st.session_state.matched_jobs))
-    c1.metric("Processed",st.session_state.processed_count)
+    c1.metric("Processed",st.session_state.Processed_count)
     c2.metric("cvs Generated",len(st.session_state.log))
+
+
+with main:
+    tab1,tab2,tab3=st.tabs([
+        "Search Jobs",
+        "Shortlisted Jobs",
+        "Results"
+    ])
+
+    with tab1:
+        st.subheader("Find Jobs")
+        col1,col2=st.columns(2)
+        with col1:
+            role=st.text_input(
+                "Job Role",
+                placeholder="e.g Python Developer"
+            )
+        with col2:
+            location=st.text_input(
+                "Location",
+                placeholder="e.g. India ,Bangalore"
+            )
+        num_per_platform=st.slider(
+            "Jobs per platform",
+            min_value=5,
+            max_value=30,
+            value=10,
+            step=5
+        )
+
+        if st.button("Search Jobs",use_container_width=True):
+            if not role:
+                st.warning("Please enter a role ")
+            elif not st.session_state.cv_text and \
+                not st.session_state.latex_content:
+                st.warning("Please Upload your CV ")
+            else:
+                with st.spinner("fetching jobs from all platform..."):
+                    jobs=fetch_all_jobs(
+                        role=role,
+                        location=location,
+                        num_results=num_per_platform
+                    )
+                    st.session_state.jobs=jobs
+
+                with st.spinner("Scoring Jobs against your CV..."):
+                    scored_jobs=[]
+                    for job in jobs:
+                        score=estimate_match_score(
+                            job,st.session_state.cv_text,st.session_state.latex_content
+                        )
+                        job["match_score"]=score
+                        scored_jobs.append(job)
+
+                    scored_jobs.sort(
+                        key=lambda x : x["match_score"],
+                        reverse=True
+                    )
+
+                    matched=[
+                        j for j in scored_jobs
+                        if j["match_score"] >= st.session_state.min_score
+                    ][:50]
+
+                    st.session_state.matched_jobs=matched
+                    st.session_state.jobs=scored_jobs
+
+                st.success(
+                    f"Found {len(jobs)} jobs - "
+                    f"{len(matched)} match your profile "
+                )
+        if st.session_state.jobs:
+            st.divider()
+            st.subheader(f" All Fetched Jobs ({len(st.session_state.jobs)})")
+            for job in st.session_state.jobs:
+                score=job.get("match_score",0)
+                if score>=70:
+                    score_color="match-High",
+                    emoji="🟢"
+                elif score>=50:
+                    score_color="match-mid"
+                    color="🟡"
+                else:
+                    score_color="match-low"
+                    emoji="🔴"
+
+                with st.expander(
+                    f"{emoji} {job['title']} @ {job['company']}"
+                    f"- {score}% match | {job['source']}"
+                ):
+                    c1,c2,c3=st.columns(3)
+                    c1.markdown(f"**Company:** {job['company']}")
+                    c2.markdown(f"**Location:** {job['location']}")
+                    c3.markdown(
+                        f"**Match:**"
+                        f"<span class='{score_color}'>{score}%</span>",
+                        unsafe_allow_html=True
+                    )
+
+                    st.markdown(f"**Description:**")
+                    st.caption(job.get("description","N/A")[:400])
+                    st.markdown(f"[View Job]({job.get('url','#')})")
+    with tab2:
+        st.subheader(
+            f"📋 Shortlisted Jobs ({len(st.session_state.matched_jobs)})"
+        )
+
+        if not st.session_state.matched_jobs:
+            st.info("🔍 Search for jobs first to see shortlisted matches!")
+        else:
+            st.caption(
+                f"These {len(st.session_state.matched_jobs)} jobs "
+                f"match your CV with {st.session_state.min_score}%+ score"
+            )
+
+            # Remove jobs option
+            st.markdown("**Remove any jobs you don't want:**")
+            jobs_to_remove = []
+            for i, job in enumerate(st.session_state.matched_jobs):
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.markdown(
+                        f"**{i+1}.** {job['title']} @ "
+                        f"{job['company']} — "
+                        f"🟢 {job['match_score']}%"
+                    )
+                with col2:
+                    if st.button("❌ Remove", key=f"remove_{i}"):
+                        jobs_to_remove.append(i)
+
+            # Remove selected jobs
+            if jobs_to_remove:
+                st.session_state.matched_jobs = [
+                    j for i, j in
+                    enumerate(st.session_state.matched_jobs)
+                    if i not in jobs_to_remove
+                ]
+                st.rerun()
+
+            st.divider()
+
+            # Generate Applications Button
+            if not st.session_state.candidate_name:
+                st.warning("⚠️ Please enter your name in the sidebar!")
+            else:
+                total = len(st.session_state.matched_jobs)
+                st.markdown(
+                    f"**Ready to generate {total} applications?**"
+                )
+                st.caption(
+                    "This will create an optimized CV and "
+                    "outreach messages for each job"
+                )
+
+                if st.button(
+                    f"⚡ Generate {total} Applications",
+                    use_container_width=True,
+                    type="primary"
+                ):
+                    st.session_state.processing = True
+                    st.session_state.log = []
+                    st.session_state.results = {}
+                    st.session_state.Processed_count = 0
+
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    results_placeholder = st.empty()
+
+                    for i, job in enumerate(
+                        st.session_state.matched_jobs
+                    ):
+                        status_text.markdown(
+                            f"⚙️ Processing **{job['title']}** "
+                            f"@ **{job['company']}** "
+                            f"({i+1}/{total})..."
+                        )
+
+                        try:
+                            result = run_crew_for_jobs(
+                                job=job,
+                                cv_text=st.session_state.cv_text,
+                                latex_content=st.session_state.latex_content,
+                                candidate_name=st.session_state.candidate_name,
+                                job_index=i+1
+                            )
+
+                            # Log entry
+                            log_entry = {
+                                "№": i+1,
+                                "Company": job["company"],
+                                "Role": job["title"],
+                                "Location": job["location"],
+                                "Source": job["source"],
+                                "Match Score": f"{job['match_score']}%",
+                                "URL": job.get("url", "N/A"),
+                                "CV File": result["pdf_path"] or "Compile Failed",
+                                "Messages File": result["msg_path"],
+                                "Status": "Pending",
+                                "Date": datetime.now().strftime(
+                                    "%Y-%m-%d %H:%M"
+                                )
+                            }
+                            st.session_state.log.append(log_entry)
+                            st.session_state.results[i] = result
+                            st.session_state.Processed_count += 1
+
+                        except Exception as e:
+                            st.warning(
+                                f"⚠️ Failed for {job['company']}: {e}"
+                            )
+
+                        # Update progress
+                        progress_bar.progress((i+1) / total)
+
+                    # Save Excel
+                    save_excel_log(st.session_state.log)
+
+                    status_text.markdown("✅ All applications generated!")
+                    st.session_state.processing = False
+                    st.success(
+                        f"🎉 Done! Generated "
+                        f"{st.session_state.Processed_count} applications!"
+                    )
+                    st.balloons()
+
+    # ─────────────────────────────────────────
+    # TAB 3: RESULTS
+    # ─────────────────────────────────────────
+    with tab3:
+        st.subheader("📦 Generated Applications")
+
+        if not st.session_state.log:
+            st.info("⚡ Generate applications first to see results here!")
+        else:
+            # Summary metrics
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Total Generated", len(st.session_state.log))
+            c2.metric(
+                "CVs Created",
+                sum(
+                    1 for r in st.session_state.results.values()
+                    if r.get("pdf_path")
+                )
+            )
+            c3.metric(
+                "Messages Created",
+                sum(
+                    1 for r in st.session_state.results.values()
+                    if r.get("msg_path")
+                )
+            )
+            c4.metric("Status", "Ready to Apply! 🚀")
+
+            st.divider()
+
+            # Excel Download
+            excel_path = "outputs/applications_log.xlsx"
+            if os.path.exists(excel_path):
+                with open(excel_path, "rb") as f:
+                    st.download_button(
+                        "📊 Download Excel Tracker",
+                        data=f,
+                        file_name="job_applications.xlsx",
+                        mime="application/vnd.openxmlformats-"
+                             "officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+
+            # ZIP Download
+            st.markdown("**Download All Files as ZIP:**")
+            if st.button(
+                "📦 Create & Download ZIP",
+                use_container_width=True
+            ):
+                import zipfile
+                zip_path = "outputs/all_applications.zip"
+                with zipfile.ZipFile(zip_path, "w") as zipf:
+                    for root, dirs, files in os.walk("outputs"):
+                        for file in files:
+                            if not file.endswith(".zip"):
+                                filepath = os.path.join(root, file)
+                                zipf.write(filepath)
+
+                with open(zip_path, "rb") as f:
+                    st.download_button(
+                        "⬇️ Download ZIP Now",
+                        data=f,
+                        file_name="all_applications.zip",
+                        mime="application/zip",
+                        use_container_width=True
+                    )
+
+            st.divider()
+
+            # Individual Results
+            st.subheader("📋 Individual Applications")
+            for i, log in enumerate(st.session_state.log):
+                result = st.session_state.results.get(i, {})
+                with st.expander(
+                    f"**{log['№']}.** {log['Role']} @ "
+                    f"{log['Company']} — {log['Match Score']}"
+                ):
+                    c1, c2, c3 = st.columns(3)
+                    c1.markdown(f"**Location:** {log['Location']}")
+                    c2.markdown(f"**Source:** {log['Source']}")
+                    c3.markdown(f"**Date:** {log['Date']}")
+                    st.markdown(f"🔗 [View Job]({log['URL']})")
+
+                    # Show messages
+                    if result.get("msg_path") and \
+                       os.path.exists(result["msg_path"]):
+                        with open(result["msg_path"]) as f:
+                            messages = f.read()
+                        st.markdown("**📬 Outreach Messages:**")
+                        st.text_area(
+                            "messages",
+                            messages[:1000],
+                            height=150,
+                            label_visibility="collapsed",
+                            key=f"msg_{i}"
+                        )
+
+                    # Download CV PDF
+                    if result.get("pdf_path") and \
+                       os.path.exists(result["pdf_path"]):
+                        with open(result["pdf_path"], "rb") as f:
+                            st.download_button(
+                                f"📄 Download CV PDF",
+                                data=f,
+                                file_name=f"cv_{log['Company']}.pdf",
+                                mime="application/pdf",
+                                key=f"pdf_{i}"
+                            )
+                    else:
+                        # Offer LaTeX if PDF failed
+                        if result.get("tex_path") and \
+                           os.path.exists(result["tex_path"]):
+                            with open(result["tex_path"]) as f:
+                                st.download_button(
+                                    "📝 Download LaTeX (PDF failed)",
+                                    data=f,
+                                    file_name=f"cv_{log['Company']}.tex",
+                                    key=f"tex_{i}"
+                                )
+
