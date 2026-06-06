@@ -114,14 +114,33 @@ def run_crew_for_jobs(job,cv_text,latex_content,candidate_name,job_index):
 
     pdf_path=compile_latex_to_pdf(tex_path,pdf_dir)
 
+    tex_content = ""
+    pdf_content = None
+    msg_content = ""
+
+    if os.path.exists(tex_path):
+        with open(tex_path, "r") as f:
+            tex_content = f.read()
+
+    if pdf_path and os.path.exists(pdf_path):
+        with open(pdf_path, "rb") as f:
+            pdf_content = f.read()
+
+    if os.path.exists(msg_path):
+        with open(msg_path, "r") as f:
+            msg_content = f.read()
+
     return {
-        "job" : job,
-        "latex_code":latex_code,
-        "message":str(result),
-        "tex_path":tex_path,
-        "pdf_path":pdf_path,
-        "msg_path":msg_path,
-        "folder":folder_name
+        "job": job,
+        "latex_code": latex_code,
+        "message": str(result),
+        "tex_path": tex_path,
+        "pdf_path": pdf_path,
+        "msg_path": msg_path,
+        "folder": folder_name,
+        "tex_content": tex_content,      # ← ADD
+        "pdf_content": pdf_content,      # ← ADD
+        "msg_content": msg_content       # ← ADD
     }
 
 def estimate_match_score(job,cv_text,latex_content):
@@ -143,42 +162,52 @@ def estimate_match_score(job,cv_text,latex_content):
 
 def save_excel_log(log):
     import openpyxl
-    from openpyxl.styles import (PatternFill,Font,Alignment,Border,Side)
-    os.makedirs("outputs/tracker",exist_ok=True)
-    path="outputs/tracker/job_applications.xlsx"
+    import io
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.worksheet.datavalidation import DataValidation
 
-    df=pd.DataFrame(log)
-    df.to_excel(path,index=False)
+    # ── Create DataFrame ──────────────────
+    df = pd.DataFrame(log)
 
-    wb=openpyxl.load_workbook(path)
-    ws=wb.active
-    ws.title="Applications"
+    # ── Save to temp file first ───────────
+    temp_path = "outputs/tracker/job_applications.xlsx"
+    os.makedirs("outputs/tracker", exist_ok=True)
+    df.to_excel(temp_path, index=False)
 
-    header_fill=PatternFill(
+    # ── Load and Format ───────────────────
+    wb = openpyxl.load_workbook(temp_path)
+    ws = wb.active
+    ws.title = "Applications"
+
+    # Header styling
+    header_fill = PatternFill(
         start_color="1E3A5F",
         end_color="1E3A5F",
         fill_type="solid"
     )
-
-    header_font=Font(
+    header_font = Font(
         color="FFFFFF",
         bold=True,
         size=11
     )
-    border=Border(
+    border = Border(
         left=Side(style="thin"),
         right=Side(style="thin"),
         top=Side(style="thin"),
         bottom=Side(style="thin")
-
     )
 
+    # Apply header styles
     for cell in ws[1]:
-        cell.fill=header_fill
-        cell.font=header_font 
-        cell.alignment=Alignment(horizontal="center",vertical="center")
-        cell.border=border
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(
+            horizontal="center",
+            vertical="center"
+        )
+        cell.border = border
 
+    # Row colors by match score
     green_fill = PatternFill(
         start_color="D4EDDA",
         end_color="D4EDDA",
@@ -196,52 +225,57 @@ def save_excel_log(log):
     )
 
     for row in ws.iter_rows(min_row=2):
-        score_cell=row[5].value or "0%"
-        score=int(str(score_cell).replace("%",""))
+        score_cell = row[5].value or "0%"
+        score = int(str(score_cell).replace("%", ""))
 
-
-        if score>=70:
-            fill=green_fill
-        elif score >=50:
-            fill=yellow_fill
+        if score >= 70:
+            fill = green_fill
+        elif score >= 50:
+            fill = yellow_fill
         else:
-            fill=red_fill 
+            fill = red_fill
 
         for cell in row:
-            cell.fill=fill
-            cell.border=border
-            cell.alignment=Alignment(
+            cell.fill = fill
+            cell.border = border
+            cell.alignment = Alignment(
                 horizontal="left",
                 vertical="center",
                 wrap_text=True
-
             )
 
+    # Auto column widths
     for col in ws.columns:
-        max_len=0
-        col_letter=col[0].column_letter
+        max_len = 0
+        col_letter = col[0].column_letter
         for cell in col:
             if cell.value:
-                max_len=max(max_len,len(str(cell.value)))
-        ws.column_dimensions[col_letter].width=min(max_len+4,40)
+                max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = min(max_len + 4, 40)
 
-    ws.freeze_panes="A2"
+    # Freeze header
+    ws.freeze_panes = "A2"
 
-    from openpyxl.worksheet.datavalidation import DataValidation
-
-    dv=DataValidation(
+    # Status dropdown
+    dv = DataValidation(
         type="list",
         formula1='"Pending,Applied,Interview,Rejected,Offer"',
-        allow_blank=True 
+        allow_blank=True
     )
     ws.add_data_validation(dv)
-
-    for row_num in range(2,len(log)+2):
+    for row_num in range(2, len(log) + 2):
         dv.add(ws[f"J{row_num}"])
 
-    wb.save(path)
-    
-    return path
+    # ── Save formatted version to buffer ──
+    formatted_buffer = io.BytesIO()
+    wb.save(formatted_buffer)
+    formatted_buffer.seek(0)
+
+    # ── Also save to disk ─────────────────
+    wb.save(temp_path)
+
+    # ── Return formatted bytes ────────────
+    return formatted_buffer.read()
 
 st.title("🤖 AI Job Search Assistant")
 st.caption("Powered by CrewAI + OpenRouter — finds, matches & applies for jobs automatically")
@@ -459,7 +493,7 @@ with main:
                             else "Date unknown"
 
                 with st.expander(
-                    f"{emoji} {job['title']} @ {job['company']} "
+                    f"{job['title']} @ {job['company']} "
                     f"— {score}% match | {job['source']} | 📅 {days_str}"
                 ):
                     c1,c2,c3=st.columns(3)
@@ -629,40 +663,65 @@ with main:
 
             # Excel Download
             excel_path = "outputs/applications_log.xlsx"
-            if os.path.exists(excel_path):
-                with open(excel_path, "rb") as f:
-                    st.download_button(
-                        "📊 Download Excel Tracker",
-                        data=f,
-                        file_name="job_applications.xlsx",
-                        mime="application/vnd.openxmlformats-"
-                             "officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
+            if st.session_state.log:
+                excel_data = save_excel_log(st.session_state.log)
+                st.download_button(
+                    "📊 Download Excel Tracker",
+                    data=excel_data,
+                    file_name="job_applications.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
 
             # ZIP Download
             st.markdown("**Download All Files as ZIP:**")
-            if st.button(
-                "📦 Create & Download ZIP",
-                use_container_width=True
-            ):
+            if st.button("📦 Create & Download ZIP", 
+             use_container_width=True):
                 import zipfile
-                zip_path = "outputs/all_applications.zip"
-                with zipfile.ZipFile(zip_path, "w") as zipf:
-                    for root, dirs, files in os.walk("outputs"):
-                        for file in files:
-                            if not file.endswith(".zip"):
-                                filepath = os.path.join(root, file)
-                                zipf.write(filepath)
+                import io
 
-                with open(zip_path, "rb") as f:
-                    st.download_button(
-                        "⬇️ Download ZIP Now",
-                        data=f,
-                        file_name="all_applications.zip",
-                        mime="application/zip",
-                        use_container_width=True
-                    )
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w") as zipf:
+                    for i, result in st.session_state.results.items():
+                        company = st.session_state.log[i]["Company"]
+
+            # Add PDF
+                        if result.get("pdf_content"):
+                            pdf_data=result["pdf_content"]
+                            if isinstance(pdf_data,(bytes,bytearray)):
+                                zipf.writestr(
+                                f"cvs/cv_{company}.pdf",
+                                result["pdf_content"]
+                                )
+            # Add LaTeX
+                        if result.get("tex_content"):
+                            zipf.writestr(
+                                f"latex/cv_{company}.tex",
+                                result["tex_content"]
+                            )
+            # Add Messages
+                        if result.get("msg_content"):
+                            zipf.writestr(
+                                f"messages/messages_{company}.txt",
+                                result["msg_content"]
+                            )
+
+        # Add Excel
+                    if st.session_state.log:
+                        excel_data = save_excel_log(st.session_state.log)
+                        zipf.writestr(
+                            "job_applications.xlsx",
+                            excel_data
+                        )
+
+                zip_buffer.seek(0)
+                st.download_button(
+                    "⬇️ Download ZIP Now",
+                    data=zip_buffer.getvalue(),
+                    file_name="all_applications.zip",
+                    mime="application/zip",
+                    use_container_width=True
+                )
 
             st.divider()
 
@@ -681,39 +740,32 @@ with main:
                     st.markdown(f"🔗 [View Job]({log['URL']})")
 
                     # Show messages
-                    if result.get("msg_path") and \
-                       os.path.exists(result["msg_path"]):
-                        with open(result["msg_path"]) as f:
-                            messages = f.read()
-                        st.markdown("**📬 Outreach Messages:**")
-                        st.text_area(
-                            "messages",
-                            messages[:1000],
-                            height=150,
-                            label_visibility="collapsed",
+                    if result.get("msg_content"):
+                        st.download_button(
+                            "💬 Download Messages",
+                            data=result["msg_content"],
+                            file_name=f"messages_{log['Company']}.txt",
+                            mime="text/plain",
                             key=f"msg_{i}"
                         )
 
+
                     # Download CV PDF
-                    if result.get("pdf_path") and \
-                       os.path.exists(result["pdf_path"]):
-                        with open(result["pdf_path"], "rb") as f:
-                            st.download_button(
-                                f"📄 Download CV PDF",
-                                data=f,
-                                file_name=f"cv_{log['Company']}.pdf",
-                                mime="application/pdf",
-                                key=f"pdf_{i}"
-                            )
-                    else:
-                        # Offer LaTeX if PDF failed
-                        if result.get("tex_path") and \
-                           os.path.exists(result["tex_path"]):
-                            with open(result["tex_path"]) as f:
-                                st.download_button(
-                                    "📝 Download LaTeX (PDF failed)",
-                                    data=f,
-                                    file_name=f"cv_{log['Company']}.tex",
-                                    key=f"tex_{i}"
-                                )
+                    if result.get("pdf_content"):
+                        st.download_button(
+                            f"📄 Download CV PDF",
+                            data=result["pdf_content"],
+                            file_name=f"cv_{log['Company']}.pdf",
+                            mime="application/pdf",
+                            key=f"pdf_{i}"
+                        )
+                    elif result.get("tex_content"):
+                        st.download_button(
+                            "📝 Download LaTeX CV",
+                            data=result["tex_content"],
+                            file_name=f"cv_{log['Company']}.tex",
+                            mime="text/plain",
+                            key=f"tex_{i}"
+                        )
+
 
