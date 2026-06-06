@@ -1,7 +1,7 @@
 {
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "pip install -r requirements.txt && playwright install chromium && playwright install-deps chromium"
+    "buildCommand": "pip install -r requirements.txt && playwright install chromium && playwright install-deps chromium && wget -qO- https://yihui.org/tinytex/install-bin-unix.sh | sh && ~/.TinyTeX/bin/x86_64-linux/tlmgr install latexmk collection-latex collection-latexextra"
   },
   "deploy": {
     "startCommand": "streamlit run app.py --server.port $PORT --server.address 0.0.0.0",
