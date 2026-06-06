@@ -125,6 +125,10 @@ def run_crew_for_jobs(job,cv_text,latex_content,candidate_name,job_index):
     if pdf_path and os.path.exists(pdf_path):
         with open(pdf_path, "rb") as f:
             pdf_content = f.read()
+        print(f"✅ PDF read into memory: {len(pdf_content)} bytes")
+    else:
+        print("⚠️ PDF not found — only LaTeX available")
+
 
     if os.path.exists(msg_path):
         with open(msg_path, "r") as f:
