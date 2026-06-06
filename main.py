@@ -43,35 +43,52 @@ def compile_latex_to_pdf(tex_path, pdf_dir="outputs/pdffiles"):
         import subprocess
         import shutil
 
-        # Make sure directories exist
         os.makedirs(pdf_dir, exist_ok=True)
-
-        # Get filename without extension
         filename = os.path.basename(tex_path).replace(".tex", "")
-
-        # Compile PDF — output goes to a temp folder first
         temp_dir = "outputs/temp_compile"
         os.makedirs(temp_dir, exist_ok=True)
 
+        # Try multiple pdflatex paths
+        pdflatex_paths = [
+            "pdflatex",                                    # local/system
+            os.path.expanduser("~/.TinyTeX/bin/x86_64-linux/pdflatex"),  # Railway
+            os.path.expanduser("~/.TinyTeX/bin/aarch64-linux/pdflatex"), # Railway ARM
+            "/usr/bin/pdflatex",                           # Linux system
+        ]
+
+        pdflatex_cmd = None
+        for path in pdflatex_paths:
+            try:
+                subprocess.run(
+                    [path, "--version"],
+                    capture_output=True,
+                    timeout=5
+                )
+                pdflatex_cmd = path
+                print(f"✅ Found pdflatex at: {path}")
+                break
+            except Exception:
+                continue
+
+        if not pdflatex_cmd:
+            print("❌ pdflatex not found on this system!")
+            return None
+
         result = subprocess.run(
-            ["pdflatex",
+            [pdflatex_cmd,
              "-output-directory", temp_dir,
              "-interaction=nonstopmode",
-             tex_path],  # ← use original tex_path directly
+             tex_path],
             capture_output=True,
             text=True,
             timeout=60
         )
 
         if result.returncode == 0:
-            # Move ONLY the PDF to pdffiles folder
             temp_pdf = os.path.join(temp_dir, f"{filename}.pdf")
             final_pdf = os.path.join(pdf_dir, f"{filename}.pdf")
             shutil.move(temp_pdf, final_pdf)
-
-            # Delete temp folder with .log .aux .out files
             shutil.rmtree(temp_dir)
-
             print(f"✅ PDF saved: {final_pdf}")
             return final_pdf
         else:
@@ -83,7 +100,6 @@ def compile_latex_to_pdf(tex_path, pdf_dir="outputs/pdffiles"):
     except Exception as e:
         print(f"❌ Compilation error: {e}")
         return None
-
 # ─────────────────────────────────────────
 # EXTRACT LATEX FROM AGENT OUTPUT
 # ─────────────────────────────────────────
