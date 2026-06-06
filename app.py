@@ -6,7 +6,7 @@ from datetime import datetime
 from crewai import Crew,Process
 from agents import create_job_analyzer_agent,create_messaging_agent,create_resume_agent
 from tasks import create_job_analysis_task,create_messaging_task,create_resume_task
-from tools import fetch_all_jobs,load_cv ,filter_jobs_by_date
+from tools import fetch_jobs_from_sources,load_cv ,filter_jobs_by_date
 from main import compile_latex_to_pdf,extract_latex_from_output
 
 st.set_page_config(
@@ -42,7 +42,9 @@ defaults={
     "processing":False,
     "Processed_count":0,
     "min_score":60,
-    "max_days":7
+    "max_days":7,
+    "selected_source":[],
+    "source_counts":{}
 }
 
 for k,v in defaults.items():
@@ -238,7 +240,7 @@ def save_excel_log(log):
         dv.add(ws[f"J{row_num}"])
 
     wb.save(path)
-    print(f"Excel Saved : {path}")
+    
     return path
 
 st.title("🤖 AI Job Search Assistant")
@@ -249,7 +251,7 @@ sidebar,main=st.columns([1,3],gap="large")
 
 with sidebar:
     st.subheader("⚙️ Setup")
-    st.markdown("** Upload your CV **")
+    st.markdown("** Upload your CV (Please upload latex version for better performance ) **")
     uploaded = st.file_uploader(
         "PDF or LaTeX (.tex)",
         type=["pdf", "tex"],
@@ -321,6 +323,35 @@ with sidebar:
     st.session_state.max_days=max_days
     st.divider()
 
+    st.markdown("Job Sources ")
+    api_source={
+        "Adzuna": "Adzuna (India)",
+        "JSearch": "JSearch (LinkedIn/Indeed)",
+        "The Muse": "The Muse (Global)",
+        "USAJobs": "USAJobs (US Gov)",
+        "Arbeitnow": "Arbeitnow (Europe)",
+        "Findwork": "Findwork (Tech)",
+        "Jooble": "Jooble (Global)",
+        
+        
+        "Remotive": " Remotive (Remote)",
+        "WeWorkRemotely": " WeWorkRemotely (Remote)",
+        "Internshala": " Internshala"
+    }
+    selected_source=[]
+    for key,label in api_source.items():
+        if st.checkbox(label,value=False,key=f"src_{key}"):
+            selected_source.append(key)
+
+    st.session_state.selected_sources=selected_source
+
+    if st.session_state.source_counts:
+        st.divider()
+        st.markdown(" Last search results :")
+        for source,count in st.session_state.source_counts.items():
+            emoji = "✅" if count > 0 else "❌"
+            st.caption(f"{emoji} {source} : {count} jobs ")
+
     st.markdown("**Session Stats**")
     c1,c2=st.columns(2)
     c1.metric("Job Found",len(st.session_state.jobs))
@@ -352,8 +383,8 @@ with main:
         num_per_platform=st.slider(
             "Jobs per platform",
             min_value=1,
-            max_value=30,
-            value=50,
+            max_value=100,
+            value=100,
             step=1
         )
 
@@ -364,14 +395,23 @@ with main:
                 not st.session_state.latex_content:
                 st.warning("Please Upload your CV ")
             else:
-                with st.spinner("fetching jobs from all platform..."):
-                    jobs=fetch_all_jobs(
+                if not st.session_state.selected_sources:
+                    st.warning("⚠️ Please select at least one job source!")
+                else:
+                    with st.spinner(
+                        f"🔍 Fetching from "
+                        f"{len(st.session_state.selected_sources)} sources..."
+                    ):
+                        jobs, source_counts = fetch_jobs_from_sources(
                         role=role,
                         location=location,
-                        num_results=num_per_platform
+                        num_results=num_per_platform,
+                        selected_sources=st.session_state.selected_sources
                     )
+        
                     jobs=filter_jobs_by_date(jobs,max_days=st.session_state.max_days)
                     st.session_state.jobs=jobs
+                    st.session_state.source_counts = source_counts
 
                 with st.spinner("Scoring Jobs against your CV..."):
                     scored_jobs=[]
@@ -390,7 +430,7 @@ with main:
                     matched=[
                         j for j in scored_jobs
                         if j["match_score"] >= st.session_state.min_score
-                    ][:50]
+                    ][:2000]
 
                     st.session_state.matched_jobs=matched
                     st.session_state.jobs=scored_jobs
